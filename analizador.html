@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Buscador de Termos em Documentos</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 700px;
+        margin: 20px auto;
+        padding: 20px;
+        background-color: #f9f9f9;
+      }
+      .card {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
+      }
+      textarea,
+      input[type="text"],
+      input[type="file"] {
+        width: 100%;
+        margin-bottom: 15px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+      button {
+        padding: 12px 24px;
+        background-color: #28a745;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+        width: 100%;
+      }
+      button:hover {
+        background-color: #218838;
+      }
+      .resultado {
+        padding: 15px;
+        background: #fff;
+        border-left: 5px solid #28a745;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      }
+      mark {
+        background-color: #ffeb3b;
+        padding: 2px;
+        border-radius: 2px;
+      }
+      .divisor {
+        text-align: center;
+        margin: 10px 0;
+        font-weight: bold;
+        color: #777;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Analisador de Documentos Avançado</h2>
+
+    <div class="card">
+      <h3>1. Escolha o Documento</h3>
+      <label>Importar arquivo (PDF, DOCX ou TXT):</label>
+      <input type="file" id="arquivoInput" accept=".pdf,.docx,.txt" />
+
+      <div class="divisor">OU</div>
+
+      <label>Cole o texto manualmente:</label>
+      <textarea
+        id="documentoTexto"
+        rows="6"
+        placeholder="Cole o conteúdo do documento aqui caso não queira subir um arquivo..."
+      ></textarea>
+    </div>
+
+    <div class="card">
+      <h3>2. Defina a Busca</h3>
+      <label>Termo ou palavra importante:</label>
+      <input
+        type="text"
+        id="termoBusca"
+        placeholder="Ex: contrato, multa, urgente..."
+      />
+
+      <button onclick="processarEDocumento()">Analisar e Buscar</button>
+    </div>
+
+    <div class="card resultado" id="painelResultado" style="display: none">
+      <h3>Trechos Importantes Encontrados:</h3>
+      <div id="listaTrechos"></div>
+    </div>
+
+    <script>
+      // Configuração inicial obrigatória para o leitor de PDF funcionar
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
+
+      async function processarEDocumento() {
+        const arquivoInput = document.getElementById("arquivoInput");
+        const documentoTexto = document.getElementById("documentoTexto");
+        const termo = document.getElementById("termoBusca").value.trim();
+
+        if (!termo) {
+          alert("Por favor, digite um termo para buscar.");
+          return;
+        }
+
+        let textoFinal = "";
+
+        // Se o usuário subiu um arquivo, precisamos ler o arquivo primeiro
+        if (arquivoInput.files.length > 0) {
+          const arquivo = arquivoInput.files[0];
+          try {
+            textoFinal = await extrairTextoDoArquivo(arquivo);
+          } catch (erro) {
+            alert("Erro ao ler o arquivo: " + erro.message);
+            return;
+          }
+        } else {
+          // Se não subiu arquivo, pega o que foi colado na caixa de texto
+          textoFinal = documentoTexto.value;
+        }
+
+        if (!textoFinal.trim()) {
+          alert("Por favor, digite um texto ou insira um arquivo válido.");
+          return;
+        }
+
+        executarBusca(textoFinal, termo);
+      }
+
+      // Função responsável por identificar o tipo de arquivo e extrair o texto puro dele
+      function extrairTextoDoArquivo(arquivo) {
+        return new Promise((resolve, reject) => {
+          const leitor = new FileReader();
+
+          // Caso 1: Arquivo de Texto Puro (.txt)
+          if (arquivo.name.endsWith(".txt")) {
+            leitor.onload = (e) => resolve(e.target.result);
+            leitor.readAsText(arquivo);
+          }
+          // Caso 2: Arquivo do Word (.docx)
+          else if (arquivo.name.endsWith(".docx")) {
+            leitor.onload = (e) => {
+              mammoth
+                .extractRawText({ arrayBuffer: e.target.result })
+                .then((result) => resolve(result.value))
+                .catch(reject);
+            };
+            leitor.readAsArrayBuffer(arquivo);
+          }
+          // Caso 3: Arquivo PDF (.pdf)
+          else if (arquivo.name.endsWith(".pdf")) {
+            leitor.onload = async (e) => {
+              try {
+                const dados = new Uint8Array(e.target.result);
+                const pdf = await pdfjsLib.getDocument({ data: dados }).promise;
+                let textoPdf = "";
+
+                // Percorre todas as páginas do PDF colando o texto
+                for (let i = 1; i <= pdf.numPages; i++) {
+                  const pagina = await pdf.getPage(i);
+                  const conteudo = await pagina.getTextContent();
+                  const strings = conteudo.items.map((item) => item.str);
+                  textoPdf += strings.join(" ") + "\n";
+                }
+                resolve(textoPdf);
+              } catch (erro) {
+                reject(erro);
+              }
+            };
+            leitor.readAsArrayBuffer(arquivo);
+          } else {
+            reject(
+              new Error(
+                "Formato de arquivo não suportado. Use TXT, PDF ou DOCX."
+              )
+            );
+          }
+        });
+      }
+
+      // Função que varre o texto extraído e exibe os resultados na tela
+      function executarBusca(texto, termo) {
+        const painel = document.getElementById("painelResultado");
+        const lista = document.getElementById("listaTrechos");
+        lista.innerHTML = "";
+
+        // Divide o texto por quebras de linha ou pontos finais para isolar as frases
+        const blocos = texto.split(/[.\n]+/);
+        let encontrou = false;
+
+        // Expressão regular para busca exata (ignorando maiúsculas/minúsculas)
+        const regexBusca = new RegExp(termo, "i");
+
+        blocos.forEach((bloco) => {
+          const blocoLimpo = bloco.trim();
+          if (blocoLimpo.length < 5) return; // Ignora pedaços muito pequenos
+
+          // Busca exata ou similaridade simples (texto contido)
+          if (
+            regexBusca.test(blocoLimpo) ||
+            blocoLimpo.toLowerCase().includes(termo.toLowerCase())
+          ) {
+            encontrou = true;
+
+            // Aplica o destaque amarelo na palavra achada
+            const textoDestacado = blocoLimpo.replace(
+              regexBusca,
+              (match) => `<mark>${match}</mark>`
+            );
+
+            const p = document.createElement("p");
+            p.innerHTML = `• ... ${textoDestacado} ...`;
+            lista.appendChild(p);
+          }
+        });
+
+        if (!encontrou) {
+          lista.innerHTML =
+            "<p>Nenhum termo correspondente ou similar encontrado no documento.</p>";
+        }
+
+        painel.style.display = "block";
+      }
+    </script>
+  </body>
+</html>
